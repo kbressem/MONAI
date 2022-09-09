@@ -947,6 +947,8 @@ class Rotate(InvertibleTransform):
     def __call__(
         self,
         img: torch.Tensor,
+        angle: Optional[Union[Sequence[float], float]] = None,
+        keep_size: Optional[bool] = None,
         mode: Optional[str] = None,
         padding_mode: Optional[str] = None,
         align_corners: Optional[bool] = None,
@@ -980,10 +982,13 @@ class Rotate(InvertibleTransform):
         input_ndim = len(im_shape)
         if input_ndim not in (2, 3):
             raise ValueError(f"Unsupported image dimension: {input_ndim}, available options are [2, 3].")
-        _angle = ensure_tuple_rep(self.angle, 1 if input_ndim == 2 else 3)
+
+        _keep_size = self.keep_size if keep_size is None else keep_size
+        _angle = self.angle if angle is None else angle
+        _angle = ensure_tuple_rep(_angle, 1 if input_ndim == 2 else 3)
         transform = create_rotate(input_ndim, _angle)
         shift = create_translate(input_ndim, ((im_shape - 1) / 2).tolist())
-        if self.keep_size:
+        if _keep_size:
             output_shape = im_shape
         else:
             corners = np.asarray(np.meshgrid(*[(0, dim) for dim in im_shape], indexing="ij")).reshape(
