@@ -947,12 +947,12 @@ class Rotate(InvertibleTransform):
     def __call__(
         self,
         img: torch.Tensor,
-        angle: Optional[Union[Sequence[float], float]] = None,
-        keep_size: Optional[bool] = None,
         mode: Optional[str] = None,
         padding_mode: Optional[str] = None,
         align_corners: Optional[bool] = None,
         dtype: Union[DtypeLike, torch.dtype] = None,
+        angle: Optional[Union[Sequence[float], float]] = None,
+        keep_size: Optional[bool] = None,
     ) -> torch.Tensor:
         """
         Args:
