@@ -617,7 +617,7 @@ class FlipBoxd(MapTransform, InvertibleTransform):
         self.box_ref_image_keys = ensure_tuple_rep(box_ref_image_keys, len(self.box_keys))
 
         self.flipper = Flip(spatial_axis=spatial_axis)
-        self.box_flipper = FlipBox(spatial_axis=self.flipper.spatial_axis)
+        self.box_flipper = FlipBox(spatial_axis=self.flipper.spatial_axes)
 
     def __call__(self, data: Mapping[Hashable, torch.Tensor]) -> Dict[Hashable, torch.Tensor]:
         d = dict(data)

@@ -482,6 +482,8 @@ class Spacing(InvertibleTransform):
         align_corners: Optional[bool] = None,
         dtype: DtypeLike = None,
         output_spatial_shape: Optional[Union[Sequence[int], np.ndarray, int]] = None,
+        pixdim: Optional[Union[Sequence[float], float, np.ndarray]] = None,
+        diagonal: Optional[bool] = None,
     ) -> torch.Tensor:
         """
         Args:
@@ -596,7 +598,13 @@ class Orientation(InvertibleTransform):
         self.as_closest_canonical = as_closest_canonical
         self.labels = labels
 
-    def __call__(self, data_array: torch.Tensor) -> torch.Tensor:
+    def __call__(
+            self,
+            data_array: torch.Tensor,
+            axcodes: Optional[str] = None,
+            as_closest_canonical: Optional[bool] = None,
+            labels: Optional[Sequence[Tuple[str, str]]] = None
+    ) -> torch.Tensor:
         """
         If input type is `MetaTensor`, original affine is extracted with `data_array.affine`.
         If input type is `torch.Tensor`, original affine is assumed to be identity.
@@ -630,21 +638,27 @@ class Orientation(InvertibleTransform):
             affine_ = np.eye(sr + 1, dtype=np.float64)
 
         src = nib.io_orientation(affine_)
-        if self.as_closest_canonical:
+
+        _axcodes = self.axcodes if axcodes is None else axcodes
+        _as_closest_canonical =\
+            self.as_closest_canonical if as_closest_canonical is None else as_closest_canonical
+        _labels = self.labels if labels is None else labels
+
+        if _as_closest_canonical:
             spatial_ornt = src
         else:
-            if self.axcodes is None:
+            if _axcodes is None:
                 raise ValueError("Incompatible values: axcodes=None and as_closest_canonical=True.")
-            if sr < len(self.axcodes):
+            if sr < len(_axcodes):
                 warnings.warn(
-                    f"axcodes ('{self.axcodes}') length is smaller than the number of input spatial dimensions D={sr}.\n"
+                    f"axcodes ('{_axcodes}') length is smaller than the number of input spatial dimensions D={sr}.\n"
                     f"{self.__class__.__name__}: input spatial shape is {spatial_shape}, num. channels is {data_array.shape[0]},"
                     "please make sure the input is in the channel-first format."
                 )
-            dst = nib.orientations.axcodes2ornt(self.axcodes[:sr], labels=self.labels)
+            dst = nib.orientations.axcodes2ornt(_axcodes[:sr], labels=_labels)
             if len(dst) < sr:
                 raise ValueError(
-                    f"axcodes must match data_array spatially, got axcodes={len(self.axcodes)}D data_array={sr}D"
+                    f"axcodes must match data_array spatially, got axcodes={len(_axcodes)}D data_array={sr}D"
                 )
             spatial_ornt = nib.orientations.ornt_transform(src, dst)
         new_affine = affine_ @ nib.orientations.inv_ornt_aff(spatial_ornt, spatial_shape)
@@ -678,7 +692,7 @@ class Orientation(InvertibleTransform):
         # Create inverse transform
         orig_affine = transform[TraceKeys.EXTRA_INFO]["original_affine"]
         orig_axcodes = nib.orientations.aff2axcodes(orig_affine)
-        inverse_transform = Orientation(axcodes=orig_axcodes, as_closest_canonical=False, labels=self.labels)
+        inverse_transform = Orientation(axcodes=orig_axcodes, as_closest_canonical=False, labels=_labels)
         # Apply inverse
         with inverse_transform.trace_transform(False):
             data = inverse_transform(data)
@@ -703,8 +717,18 @@ class Flip(InvertibleTransform):
 
     backend = [TransformBackends.TORCH]
 
-    def __init__(self, spatial_axis: Optional[Union[Sequence[int], int]] = None) -> None:
-        self.spatial_axis = spatial_axis
+    @deprecated_arg(name="spatial_axis", since="1.0", msg_suffix="please use `spatial_axes` instead.")
+    def __init__(
+            self,
+            spatial_axis: Optional[Union[Sequence[int], int]] = None,
+            spatial_axes: Optional[Union[Sequence[int], int]] = None
+    ) -> None:
+        if spatial_axis is not None and spatial_axes is not None:
+            raise ValueError("Only one of 'spatial_axis' and 'spatial_axes may be set; "
+                             f"'spatial_axis' is {spatial_axis} "
+                             f"and 'spatial_axes' is {spatial_axes}")
+
+        self.spatial_axes = spatial_axis if spatial_axes is None else spatial_axes
 
     def update_meta(self, img, shape, axes):
         # shape and axes include the channel dim
@@ -724,7 +748,7 @@ class Flip(InvertibleTransform):
             img: channel first array, must have shape: (num_channels, H[, W, ..., ])
         """
         img = convert_to_tensor(img, track_meta=get_track_meta())
-        axes = map_spatial_axes(img.ndim, self.spatial_axis)
+        axes = map_spatial_axes(img.ndim, self.spatial_axes)
         out = self.forward_image(img, axes)
         if get_track_meta():
             self.update_meta(out, out.shape, axes)
@@ -733,7 +757,7 @@ class Flip(InvertibleTransform):
 
     def inverse(self, data: torch.Tensor) -> torch.Tensor:
         self.pop_transform(data)
-        flipper = Flip(spatial_axis=self.spatial_axis)
+        flipper = Flip(spatial_axis=self.spatial_axes)
         with flipper.trace_transform(False):
             return flipper(data)
 
@@ -1117,6 +1141,8 @@ class Zoom(InvertibleTransform):
         mode: Optional[str] = None,
         padding_mode: Optional[str] = None,
         align_corners: Optional[bool] = None,
+        zoom: Optional[Union[Sequence[float], float]] = None,
+        keep_size: Optional[bool] = None
     ) -> torch.Tensor:
         """
         Args:
@@ -1140,6 +1166,9 @@ class Zoom(InvertibleTransform):
         img = convert_to_tensor(img, track_meta=get_track_meta())
         img_t = img.to(torch.float32)
 
+        _keep_size = self.keep_size if keep_size is None else keep_size
+
+        _zoom = self.zoom if zoom is None else zoom
         _zoom = ensure_tuple_rep(self.zoom, img.ndim - 1)  # match the spatial image dim
         _mode = look_up_option(self.mode if mode is None else mode, InterpolateMode).value
         _align_corners = self.align_corners if align_corners is None else align_corners
@@ -1158,7 +1187,7 @@ class Zoom(InvertibleTransform):
         out, *_ = convert_to_dst_type(zoomed, dst=img)
         if get_track_meta():
             self.update_meta(out, orig_size[1:], z_size[1:])
-        do_pad_crop = self.keep_size and not np.allclose(orig_size, z_size)
+        do_pad_crop = _keep_size and not np.allclose(orig_size, z_size)
         if do_pad_crop:
             _pad_crop = ResizeWithPadOrCrop(spatial_size=img_t.shape[1:], mode=_padding_mode)
             out = _pad_crop(out)
@@ -1529,7 +1558,7 @@ class RandAxisFlip(RandomizableTransform, InvertibleTransform):
             self.randomize(data=img)
 
         if self._do_transform:
-            self.flipper.spatial_axis = self._axis
+            self.flipper.spatial_axes = self._axis
             out = self.flipper(img)
         else:
             out = convert_to_tensor(img, track_meta=get_track_meta())
